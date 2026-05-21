@@ -17,4 +17,4 @@ if (dsn) {
     profileLifecycle: "trace",
     sendDefaultPii: true,
   });
-} 
+}
