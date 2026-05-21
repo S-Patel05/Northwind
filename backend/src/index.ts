@@ -17,6 +17,7 @@ import meRouter from "./routes/meRouter";
 import streamRouter from "./routes/streamRouter";
 import chekoutRouter from "./routes/chekoutRouter";
 import adminRouter from "./routes/adminRouter";
+import orderRouter from "./routes/orderRouter";
 
 import { polarWebhookHandler } from "./webhooks/polar";
 import { sentryClerkUserMiddleware } from "./middleware/sentryClerkUser";
@@ -48,6 +49,7 @@ app.use("/api/products", productRouter);
 app.use("/api/stream", streamRouter);
 app.use("/api/checkout", chekoutRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/orders", orderRouter);
 
 const publicDir = path.join(process.cwd(), "public");
 if (fs.existsSync(publicDir)) {
@@ -67,6 +69,7 @@ if (fs.existsSync(publicDir)) {
     res.sendFile(path.join(publicDir, "index.html"), (err) => next(err));
   });
 }
+
 // sentry will be attached to the response object
 Sentry.setupExpressErrorHandler(app);
 
@@ -77,9 +80,9 @@ app.use(
     res.status(500).json({
       error: "Internal server error",
       ...(sentryId !== undefined && { sentryId }),
-    }); 
+    });
   },
-); 
+);
 
 app.listen(env.PORT, () => {
   console.log("Listening on port:", env.PORT);
