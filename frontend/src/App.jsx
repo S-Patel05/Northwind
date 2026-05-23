@@ -4,6 +4,8 @@ import PageLoader from "./components/PageLoader";
 import { useAuth } from '@clerk/react';
 import Layout from './components/Layout';
 import HomePage from "./pages/HomePage";
+import CartPage from "./pages/CartPage";
+import OrdersPage from "./pages/OrdersPage";
 import { Routes, Route, Navigate } from "react-router";
 
 function App() {
@@ -14,6 +16,11 @@ function App() {
  <Layout>
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/cart" element={<CartPage />} />
+                <Route
+          path="/orders"
+          element={isSignedIn ? <OrdersPage /> : <Navigate to={"/"} replace />}
+        />
       </Routes>
     </Layout>
   )  
