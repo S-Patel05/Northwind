@@ -153,11 +153,13 @@ export async function createStreamChannel(req: Request, res: Response, next: Nex
       return;
     }
 
-    if (order.status !== "paid") {
-      res.status(403).json({ error: "Order must be paid to open support chat" });
-      return;
-    }
-
+  // Allow chat for all orders
+if (!order) {
+  res.status(404).json({
+    error: "Order not found",
+  });
+  return;
+}
     const streamChatUserId = streamUserId(userId);
 
     await server.upsertUser({
@@ -208,10 +210,12 @@ export async function createVideoInvite(req: Request, res: Response, next: NextF
       .where(eq(orders.id, req.params.id as string))
       .limit(1);
 
-    if (!order || order.status !== "paid") {
-      res.status(404).json({ error: "Order not found or not paid" });
-      return;
-    }
+    if (!order) {
+  res.status(404).json({
+    error: "Order not found",
+  });
+  return;
+}
 
     const [owner] = await db.select().from(users).where(eq(users.id, order.userId)).limit(1);
 

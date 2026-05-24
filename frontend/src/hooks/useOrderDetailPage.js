@@ -15,7 +15,7 @@ export function useOrderDetailPage() {
 
   const order = data?.order ?? null;
   const items = data?.items ?? [];
-  const paid = order?.status === "paid";
+  const paid = true;
 
   return {
     id,
