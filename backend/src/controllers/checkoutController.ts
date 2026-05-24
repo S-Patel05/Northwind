@@ -1,14 +1,15 @@
 import type { Request, Response, NextFunction } from "express";
-import { getEnv } from "../lib/env";
 import z from "zod";
 import { getAuth } from "@clerk/express";
-import { getLocalUser } from "../lib/users";
-import { db } from "../db";
-import { CheckoutSessionLine, checkoutSessions, products } from "../db/schema";
 import { and, eq, inArray } from "drizzle-orm";
-import { polarCreateCheckout } from "../lib/polar";
 
-const env = getEnv();
+import { db } from "../db";
+import { getLocalUser } from "../lib/users";
+import {
+  products,
+  orders,
+  orderItems,
+} from "../db/schema";
 
 const cartSchema = z.object({
   items: z
@@ -16,110 +17,113 @@ const cartSchema = z.object({
       z.object({
         productId: z.string().uuid(),
         quantity: z.number().int().positive(),
-      }),
+      })
     )
     .min(1),
 });
 
-export async function createCheckout(req: Request, res: Response, next: NextFunction) {
+export async function createCheckout(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   try {
-    // only signed-in users can start checkout
+    // Only signed-in users
     const { userId, isAuthenticated } = getAuth(req);
+
     if (!isAuthenticated || !userId) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
+      return res.status(401).json({
+        error: "Unauthorized",
+      });
     }
 
+    // Validate cart
     const parsed = cartSchema.safeParse(req.body);
+
     if (!parsed.success) {
-      res.status(400).json({ error: "Invalid cart", details: parsed.error.flatten() });
-      return;
+      return res.status(400).json({
+        error: "Invalid cart",
+        details: parsed.error.flatten(),
+      });
     }
 
-    // polar access token is required
-    if (!env.POLAR_ACCESS_TOKEN) {
-      res.status(503).json({ error: "Payments are not configured" });
-      return;
-    }
-
+    // Get logged in user
     const localUser = await getLocalUser(userId);
+
     if (!localUser) {
-      res.status(503).json({ error: "Account not synced yet" });
-      return;
+      return res.status(404).json({
+        error: "User not found",
+      });
     }
 
-    const ids = parsed.data.items.map((i) => i.productId);
+    const ids = parsed.data.items.map(
+      (item) => item.productId
+    );
 
-    // load every cart product that exists, is active, and matches the IDs we asked for.
+    // Get products from database
     const prodRows = await db
       .select()
       .from(products)
-      .where(and(inArray(products.id, ids), eq(products.active, true)));
+      .where(
+        and(
+          inArray(products.id, ids),
+          eq(products.active, true)
+        )
+      );
 
     if (prodRows.length !== ids.length) {
-      res.status(400).json({ error: "One or more products are invalid" });
-      return;
+      return res.status(400).json({
+        error: "One or more products are invalid",
+      });
     }
 
-    const byId = new Map(prodRows.map((p) => [p.id, p]));
+    const byId = new Map(
+      prodRows.map((p) => [p.id, p])
+    );
+
     let totalCents = 0;
-    const lines: CheckoutSessionLine[] = [];
 
-    for (const line of parsed.data.items) {
-      const p = byId.get(line.productId)!;
-      totalCents += p.priceCents * line.quantity;
-      lines.push({
-        productId: p.id,
-        quantity: line.quantity,
-        unitPriceCents: p.priceCents,
-      });
+    // Calculate total
+    for (const item of parsed.data.items) {
+      const product = byId.get(item.productId);
+
+      if (!product) continue;
+
+      totalCents +=
+        product.priceCents * item.quantity;
     }
 
-    if (totalCents < 10) {
-      res.status(400).json({
-        error: "Total below Polar minimum (e.g. USD requires at least 10 cents)",
-      });
-      return;
-    }
+    // Create order
+const [order] = await db
+  .insert(orders)
+  .values({
+    userId: localUser.id,
+    totalCents,
+  })
+  .returning();
 
-    const [session] = await db
-      .insert(checkoutSessions)
-      .values({
-        userId: localUser.id,
-        lines,
-        totalCents,
-        currency: "usd",
+    // Create order items
+    await db.insert(orderItems).values(
+      parsed.data.items.map((item) => {
+        const product = byId.get(item.productId)!;
+
+        return {
+          orderId: order.id,
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPriceCents: product.priceCents,
+        };
       })
-      .returning();
+    );
 
-    const successUrl = `${env.FRONTEND_URL}/checkout/return?checkout_id={CHECKOUT_ID}`;
-    const returnUrl = `${env.FRONTEND_URL}/cart`;
-
-    const checkout = await polarCreateCheckout(env, {
-      products: [env.POLAR_CHECKOUT_PRODUCT_ID],
-      prices: {
-        [env.POLAR_CHECKOUT_PRODUCT_ID]: [
-          {
-            amount_type: "fixed",
-            price_currency: "usd",
-            price_amount: totalCents,
-          },
-        ],
-      },
-
-      success_url: successUrl,
-      return_url: returnUrl,
-      external_customer_id: userId,
-      metadata: { checkout_session_id: session.id },
+    // Success response
+    return res.status(200).json({
+      success: true,
+      message: "Order confirmed",
+      orderId: order.id,
+      totalCents,
     });
-
-    await db
-      .update(checkoutSessions)
-      .set({ polarCheckoutId: checkout.id })
-      .where(eq(checkoutSessions.id, session.id));
-
-    res.json({ checkoutUrl: checkout.url });
-  } catch (e) {
-    next(e);
+  } catch (error) {
+    next(error);
   }
 }
